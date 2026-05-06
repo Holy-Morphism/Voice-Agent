@@ -4,8 +4,9 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, WebSocket
+from starlette.websockets import WebSocketDisconnect
+from fastapi.responses import FileResponse, Response
 
 from services.llm import GeminiLLM
 from services.stt import DeepgramSTT
@@ -21,6 +22,11 @@ app = FastAPI(title="Voice Agent")
 @app.get("/")
 async def index():
     return FileResponse("frontend/index.html")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("frontend/favicon.ico") if os.path.exists("frontend/favicon.ico") else Response(status_code=204)
 
 
 @app.websocket("/ws")
@@ -62,12 +68,27 @@ async def session(ws: WebSocket):
                 log.exception("pipeline error")
                 await ws.send_json({"type": "state", "state": "listening"})
 
-    await stt.start(handle_utterance)
+    async def handle_update(text: str) -> None:
+        try:
+            await ws.send_json({"type": "live_transcript", "text": text})
+        except Exception:
+            pass
 
+    await stt.start(on_update=handle_update, on_final=handle_utterance)
+
+    chunks_received = 0
     try:
         while True:
             msg = await ws.receive()
-            if "bytes" in msg and msg["bytes"]:
+            if msg["type"] == "websocket.disconnect":
+                log.info("session closed by client  audio_chunks_received=%d", chunks_received)
+                break
+            if msg.get("bytes"):
+                chunks_received += 1
+                if chunks_received == 1:
+                    log.info("first audio chunk from browser (%d bytes)", len(msg["bytes"]))
+                elif chunks_received % 50 == 0:
+                    log.info("audio chunks received from browser: %d", chunks_received)
                 await stt.send(msg["bytes"])
     except WebSocketDisconnect:
         log.info("session closed by client")

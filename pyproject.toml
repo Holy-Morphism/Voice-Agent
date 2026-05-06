@@ -5,8 +5,10 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "aiohttp>=3.13.5",
     "deepgram-sdk>=7.1.0",
     "fastapi[standard]>=0.136.1",
+    "ffmpeg-python>=0.2.0",
     "google-genai>=1.0.0",
     "httpx>=0.28.1",
     "python-dotenv>=1.2.2",

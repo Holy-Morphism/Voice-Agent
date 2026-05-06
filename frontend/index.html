@@ -189,6 +189,19 @@
       min-height: 1.3em;
     }
 
+    .live-text {
+      font-size: 0.92rem;
+      color: #93c5fd;
+      min-height: 1.3em;
+    }
+    .live-text::after {
+      content: '▋';
+      display: inline-block;
+      animation: blink 0.9s step-end infinite;
+      margin-left: 2px;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
     .agent-text {
       font-size: 0.97rem;
       color: #e2e8f0;
@@ -239,6 +252,7 @@
 
 <div class="info" id="info">
   <div class="status-label" id="statusLabel">Ready</div>
+  <div class="live-text"    id="liveText"  style="display:none"></div>
   <div class="user-text"    id="userText"></div>
   <div class="agent-text"   id="agentText"></div>
 </div>
@@ -248,11 +262,28 @@
 <canvas id="particles"></canvas>
 
 <script>
+// AudioWorklet processor — captures 16kHz mono PCM (80ms chunks → 1280 samples)
+const _PCM_PROCESSOR = `
+class PCMProcessor extends AudioWorkletProcessor {
+  constructor() { super(); this._buf = []; }
+  process(inputs) {
+    const ch = inputs[0]?.[0];
+    if (ch) for (let s of ch) this._buf.push(s);
+    while (this._buf.length >= 1280) {
+      this.port.postMessage(new Float32Array(this._buf.splice(0, 1280)));
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-proc', PCMProcessor);
+`;
+
 // ─── State ────────────────────────────────────────────────
-let ws         = null;
-let recorder   = null;
-let micStream  = null;
-let active     = false;
+let ws          = null;
+let micStream   = null;
+let audioCtx    = null;
+let audioNode   = null;
+let active      = false;
 let currentState = 'idle';
 
 // ─── Audio playback (MediaSource for streaming MP3) ───────
@@ -346,19 +377,34 @@ async function start() {
   ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.binaryType = 'arraybuffer';
 
-  ws.onopen = () => {
+  ws.onopen = async () => {
     active = true;
     document.getElementById('btn').textContent = 'Disconnect';
     setState('listening');
 
-    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus' : 'audio/webm';
-    recorder = new MediaRecorder(micStream, { mimeType: mime });
-    recorder.ondataavailable = e => {
-      if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN)
-        ws.send(e.data);
+    // Capture raw 16kHz mono PCM for Deepgram Flux (linear16)
+    audioCtx = new AudioContext({ sampleRate: 16000 });
+    const blobUrl = URL.createObjectURL(new Blob([_PCM_PROCESSOR], { type: 'application/javascript' }));
+    await audioCtx.audioWorklet.addModule(blobUrl);
+    URL.revokeObjectURL(blobUrl);
+
+    const source = audioCtx.createMediaStreamSource(micStream);
+    audioNode = new AudioWorkletNode(audioCtx, 'pcm-proc');
+
+    let chunksSent = 0;
+    audioNode.port.onmessage = e => {
+      if (ws?.readyState !== WebSocket.OPEN) return;
+      const f32 = e.data;
+      const i16 = new Int16Array(f32.length);
+      for (let i = 0; i < f32.length; i++)
+        i16[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32767)));
+      ws.send(i16.buffer);
+      chunksSent++;
+      if (chunksSent === 1 || chunksSent % 25 === 0)
+        console.log(`[voice-agent] PCM chunks sent: ${chunksSent}  bytes=${i16.byteLength}`);
     };
-    recorder.start(200);
+
+    source.connect(audioNode);
   };
 
   ws.onmessage = e => {
@@ -367,17 +413,33 @@ async function start() {
       return;
     }
     const msg = JSON.parse(e.data);
+    const live = document.getElementById('liveText');
+    const user = document.getElementById('userText');
+    const agent = document.getElementById('agentText');
     switch (msg.type) {
       case 'state':
         setState(msg.state);
-        if (msg.state === 'speaking') resetAudio();
+        if (msg.state === 'speaking') {
+          resetAudio();
+          live.style.display = 'none';
+          live.textContent = '';
+        }
+        if (msg.state === 'listening') {
+          live.style.display = '';
+        }
+        break;
+      case 'live_transcript':
+        live.style.display = '';
+        live.textContent = msg.text;
         break;
       case 'transcript':
-        document.getElementById('userText').textContent  = '“' + msg.text + '”';
-        document.getElementById('agentText').textContent = '';
+        live.style.display = 'none';
+        live.textContent = '';
+        user.textContent  = '”' + msg.text + '”';
+        agent.textContent = '';
         break;
       case 'response_text':
-        document.getElementById('agentText').textContent += msg.text;
+        agent.textContent += msg.text;
         break;
       case 'audio_done':
         endAudio();
@@ -395,9 +457,11 @@ function disconnect() {
 
 function cleanup() {
   active = false;
-  recorder?.stop();
+  audioNode?.disconnect();
+  audioCtx?.close();
+  audioNode = null;
+  audioCtx  = null;
   micStream?.getTracks().forEach(t => t.stop());
-  recorder  = null;
   micStream = null;
   setState('idle');
   document.getElementById('btn').textContent = 'Start';

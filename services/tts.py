@@ -23,15 +23,28 @@ class ElevenLabsTTS:
 
     async def stream(self, text_gen: AsyncIterator[str]) -> AsyncGenerator[bytes, None]:
         url = _WS_URL.format(voice_id=self._voice_id)
-        audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=64)
+        log.info("ElevenLabs: connecting  voice_id=%s", self._voice_id)
 
-        async with websockets.connect(
-            url,
-            additional_headers={"xi-api-key": self._api_key},
-            ping_interval=None,
-        ) as ws:
-            await ws.send(
-                json.dumps({
+        if not self._api_key:
+            log.error("ElevenLabs: ELEVENLABS_API_KEY / ELEVEN_LABS_API_KEY is not set")
+            return
+
+        try:
+            ws_cm = websockets.connect(
+                url,
+                additional_headers={"xi-api-key": self._api_key},
+                ping_interval=None,
+            )
+        except Exception:
+            log.exception("ElevenLabs: failed to create WebSocket connector")
+            return
+
+        try:
+            async with ws_cm as ws:
+                log.info("ElevenLabs: WebSocket connected")
+                audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=64)
+
+                bos = {
                     "text": " ",
                     "voice_settings": {
                         "stability": 0.4,
@@ -42,38 +55,70 @@ class ElevenLabsTTS:
                     "generation_config": {
                         "chunk_length_schedule": [120, 160, 250, 290],
                     },
-                })
+                }
+                await ws.send(json.dumps(bos))
+                log.info("ElevenLabs: sent BOS")
+
+                async def _sender():
+                    sent_chars = 0
+                    try:
+                        async for chunk in text_gen:
+                            if chunk:
+                                sent_chars += len(chunk)
+                                log.debug("ElevenLabs: sending text (%d chars so far)", sent_chars)
+                                await ws.send(json.dumps({"text": chunk}))
+                        await ws.send(json.dumps({"text": ""}))
+                        log.info("ElevenLabs: sent EOS  (total %d chars)", sent_chars)
+                    except Exception:
+                        log.exception("ElevenLabs: sender error")
+
+                async def _receiver():
+                    chunks_received = 0
+                    bytes_received = 0
+                    try:
+                        async for raw in ws:
+                            msg = json.loads(raw)
+                            if err := msg.get("error"):
+                                log.error("ElevenLabs: server error: %s", err)
+                            if msg.get("audio"):
+                                data = base64.b64decode(msg["audio"])
+                                chunks_received += 1
+                                bytes_received += len(data)
+                                log.debug(
+                                    "ElevenLabs: audio chunk #%d  %d bytes  (%d total)",
+                                    chunks_received, len(data), bytes_received,
+                                )
+                                await audio_q.put(data)
+                            if msg.get("isFinal"):
+                                log.info(
+                                    "ElevenLabs: isFinal  chunks=%d  bytes=%d",
+                                    chunks_received, bytes_received,
+                                )
+                                break
+                    except websockets.exceptions.ConnectionClosedError as e:
+                        log.error("ElevenLabs: connection closed unexpectedly: %s", e)
+                    except Exception:
+                        log.exception("ElevenLabs: receiver error")
+                    finally:
+                        await audio_q.put(None)
+
+                send_task = asyncio.create_task(_sender())
+                recv_task = asyncio.create_task(_receiver())
+
+                while True:
+                    chunk = await audio_q.get()
+                    if chunk is None:
+                        break
+                    yield chunk
+
+                await asyncio.gather(send_task, recv_task, return_exceptions=True)
+                log.info("ElevenLabs: stream complete")
+
+        except websockets.exceptions.InvalidStatus as e:
+            log.error(
+                "ElevenLabs: WebSocket handshake rejected  status=%s  body=%s",
+                e.response.status_code,
+                e.response.body[:200] if hasattr(e.response, "body") else "",
             )
-
-            async def _sender():
-                try:
-                    async for chunk in text_gen:
-                        if chunk:
-                            await ws.send(json.dumps({"text": chunk}))
-                    await ws.send(json.dumps({"text": ""}))
-                except Exception:
-                    log.exception("ElevenLabs sender error")
-
-            async def _receiver():
-                try:
-                    async for raw in ws:
-                        msg = json.loads(raw)
-                        if msg.get("audio"):
-                            await audio_q.put(base64.b64decode(msg["audio"]))
-                        if msg.get("isFinal"):
-                            break
-                except Exception:
-                    log.exception("ElevenLabs receiver error")
-                finally:
-                    await audio_q.put(None)
-
-            send_task = asyncio.create_task(_sender())
-            recv_task = asyncio.create_task(_receiver())
-
-            while True:
-                chunk = await audio_q.get()
-                if chunk is None:
-                    break
-                yield chunk
-
-            await asyncio.gather(send_task, recv_task, return_exceptions=True)
+        except Exception:
+            log.exception("ElevenLabs: unexpected error")
