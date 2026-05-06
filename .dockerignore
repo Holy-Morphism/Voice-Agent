@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+e.nv
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+README.md
+.env.example
