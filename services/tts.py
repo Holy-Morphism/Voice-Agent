@@ -12,7 +12,6 @@ _WS_URL = (
     "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
     "?model_id=eleven_flash_v2_5"
     "&output_format=mp3_44100_128"
-    "&optimize_streaming_latency=3"
 )
 
 

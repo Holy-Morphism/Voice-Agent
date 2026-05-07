@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket
 from starlette.websockets import WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 
-from services.llm import GeminiLLM
+from services.llm import OpenAILLM
 from services.stt import DeepgramSTT
 from services.tts import ElevenLabsTTS
 
@@ -35,7 +35,7 @@ async def session(ws: WebSocket):
     log.info("session opened")
 
     stt = DeepgramSTT(os.environ["DEEPGRAM_API_KEY"])
-    llm = GeminiLLM(os.environ["GOOGLE_API_KEY"])
+    llm = OpenAILLM(os.environ["OPENAI_API_KEY"])
     tts = ElevenLabsTTS(
         api_key=os.environ.get("ELEVENLABS_API_KEY") or os.environ.get("ELEVEN_LABS_API_KEY", ""),
         voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),

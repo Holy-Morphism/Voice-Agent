@@ -1,8 +1,7 @@
 import logging
 from typing import AsyncGenerator
 
-from google import genai
-from google.genai import types
+from openai import AsyncOpenAI
 
 log = logging.getLogger(__name__)
 
@@ -24,45 +23,36 @@ When you use web search, ALWAYS say:
 Speak conversationally — you are talking, not writing. Be vivid and concise.\
 """
 
-_MAX_HISTORY = 20  # keep last 10 turns (user + model pairs)
+_MAX_HISTORY = 20
 
 
-class GeminiLLM:
+class OpenAILLM:
     def __init__(self, api_key: str):
-        self._client = genai.Client(api_key=api_key)
-        self._history: list[types.Content] = []
+        self._client = AsyncOpenAI(api_key=api_key)
+        self._history: list[dict] = []
 
     async def generate_stream(self, user_message: str) -> AsyncGenerator[str, None]:
-        self._history.append(
-            types.Content(role="user", parts=[types.Part(text=user_message)])
-        )
+        self._history.append({"role": "user", "content": user_message})
         if len(self._history) > _MAX_HISTORY:
             self._history = self._history[-_MAX_HISTORY:]
 
         collected: list[str] = []
 
         try:
-            async for chunk in self._client.aio.models.generate_content_stream(
-                model="gemini-2.0-flash",
-                contents=self._history,
-                config=types.GenerateContentConfig(
-                    system_instruction=_SYSTEM,
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                    temperature=1.1,
-                ),
-            ):
-                if chunk.text:
-                    collected.append(chunk.text)
-                    yield chunk.text
+            stream = await self._client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "system", "content": _SYSTEM}, *self._history],
+                stream=True,
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    collected.append(delta)
+                    yield delta
         except Exception:
-            log.exception("Gemini error")
+            log.exception("OpenAI error")
             yield "Sorry [pause] I ran into an issue. Please try again."
             return
 
         if collected:
-            self._history.append(
-                types.Content(
-                    role="model",
-                    parts=[types.Part(text="".join(collected))],
-                )
-            )
+            self._history.append({"role": "assistant", "content": "".join(collected)})
