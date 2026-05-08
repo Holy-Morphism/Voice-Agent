@@ -38,7 +38,7 @@ async def session(ws: WebSocket):
     llm = OpenAILLM(os.environ["OPENAI_API_KEY"])
     tts = ElevenLabsTTS(
         api_key=os.environ.get("ELEVENLABS_API_KEY") or os.environ.get("ELEVEN_LABS_API_KEY", ""),
-        voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
+        voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb"),
     )
 
     lock = asyncio.Lock()

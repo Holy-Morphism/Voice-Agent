@@ -29,26 +29,20 @@ class ElevenLabsTTS:
             return
 
         try:
-            ws_cm = websockets.connect(
+            async with websockets.connect(
                 url,
                 additional_headers={"xi-api-key": self._api_key},
                 ping_interval=None,
-            )
-        except Exception:
-            log.exception("ElevenLabs: failed to create WebSocket connector")
-            return
-
-        try:
-            async with ws_cm as ws:
+            ) as ws:
                 log.info("ElevenLabs: WebSocket connected")
                 audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=64)
 
                 bos = {
                     "text": " ",
+                    "xi_api_key": self._api_key,
                     "voice_settings": {
                         "stability": 0.4,
                         "similarity_boost": 0.8,
-                        "style": 0.35,
                         "use_speaker_boost": True,
                     },
                     "generation_config": {
