@@ -1,11 +1,11 @@
-# Voice Agent
+<div align=center> 
+ <h1>Voice Agent</h1>
+</div>
+
+![Voice Agent Image](image.png)
 
 A real-time voice assistant: Deepgram STT → LangChain agent (GPT-4o + web search) → ElevenLabs TTS, all streamed end-to-end.
 
-## Prerequisites
-
-- Python 3.14+
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
 ## Environment variables
 
@@ -27,13 +27,19 @@ API keys:
 
 ## Local setup
 
-**1. Install dependencies**
+**1. Prerequisites**
+- Python 3.14+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+
+
+
+**2. Install dependencies**
 
 ```bash
 uv sync
 ```
 
-**2. Run**
+**3. Run**
 
 ```bash
 uv run fastapi dev main.py
@@ -43,7 +49,7 @@ Open [http://localhost:8000](http://localhost:8000) and allow microphone access.
 
 ---
 
-## Docker
+## Docker Setup
 
 **Build and start**
 
