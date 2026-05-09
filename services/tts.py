@@ -14,6 +14,9 @@ _WS_URL = (
     "&output_format=mp3_44100_128"
 )
 
+# Characters that mark a natural speech pause — flush audio immediately at these
+_FLUSH_CHARS = frozenset(".!?")
+
 
 class ElevenLabsTTS:
     def __init__(self, api_key: str, voice_id: str):
@@ -37,16 +40,18 @@ class ElevenLabsTTS:
                 log.info("ElevenLabs: WebSocket connected")
                 audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=64)
 
+                # BOS — api key is already in the header so no need to repeat it here.
+                # chunk_length_schedule controls how many buffered chars trigger a
+                # generation pass; smaller = lower latency at slight quality cost.
                 bos = {
                     "text": " ",
-                    "xi_api_key": self._api_key,
                     "voice_settings": {
                         "stability": 0.4,
                         "similarity_boost": 0.8,
                         "use_speaker_boost": True,
                     },
                     "generation_config": {
-                        "chunk_length_schedule": [120, 160, 250, 290],
+                        "chunk_length_schedule": [50, 100, 150],
                     },
                 }
                 await ws.send(json.dumps(bos))
@@ -56,10 +61,21 @@ class ElevenLabsTTS:
                     sent_chars = 0
                     try:
                         async for chunk in text_gen:
-                            if chunk:
-                                sent_chars += len(chunk)
-                                log.debug("ElevenLabs: sending text (%d chars so far)", sent_chars)
-                                await ws.send(json.dumps({"text": chunk}))
+                            if not chunk:
+                                continue
+                            sent_chars += len(chunk)
+                            # Flush immediately at sentence boundaries so TTS starts
+                            # speaking the first sentence while LLM generates the rest.
+                            flush = any(ch in _FLUSH_CHARS for ch in chunk)
+                            msg: dict = {"text": chunk}
+                            if flush:
+                                msg["flush"] = True
+                            await ws.send(json.dumps(msg))
+                            log.debug(
+                                "ElevenLabs: sent %d chars (flush=%s, total=%d)",
+                                len(chunk), flush, sent_chars,
+                            )
+                        # EOS — empty text closes the generation pass
                         await ws.send(json.dumps({"text": ""}))
                         log.info("ElevenLabs: sent EOS  (total %d chars)", sent_chars)
                     except Exception:
