@@ -6,7 +6,7 @@ from ddgs import DDGS
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ like prices, weather or sports scores, or anything that needs up-to-date info.""
 class VoiceAgent:
     def __init__(self, api_key: str):
         llm = ChatOpenAI(model="gpt-4o", api_key=api_key)
-        self._agent = create_react_agent(llm, [web_search])
+        self._agent = create_agent(llm, tools=[web_search])
         self._history: list = []
 
     async def generate_stream(self, user_message: str) -> AsyncGenerator[str, None]:
